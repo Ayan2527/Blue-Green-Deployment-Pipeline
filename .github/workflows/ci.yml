@@ -1,15 +1,23 @@
-name: CI
+name: CI/CD
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '.github/workflows/**'
+    paths:
+      - 'Dockerfile'
+      - 'index.html'
+      - 'green/**'
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
 
 jobs:
   build-and-push:
-    name: Build and Push Docker Image to Docker Hub
+    name: Build and push image
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,3 +31,20 @@ jobs:
           context: .
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/blue-green-app:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  deploy:
+    name: Deploy to VM
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd /home/ubuntu/blue-green-deployment-platform/scripts
+            bash deploy.sh ${{ secrets.DOCKERHUB_USERNAME }}/blue-green-app:${{ needs.build-and-push.outputs.tag }}
